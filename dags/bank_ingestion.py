@@ -41,6 +41,7 @@ def bank_ingestion():
             response = requests.get(
                 "https://api.worldbank.org/v2/countries?format=json", timeout=10
             )
+            response.raise_for_status()
             return PokeReturnValue(is_done=True, xcom_value="API is online")
         except requests.exceptions.RequestException:
             return PokeReturnValue(is_done=False)
