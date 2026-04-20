@@ -1,0 +1,54 @@
+models:
+  - name: stg_exchange_rate
+    description: "Staging table for exchange rate data from the raw layer."
+    columns:
+      - name: country_code
+        tests:
+          - not_null
+          - accepted_values:
+              values: ["EGY", "SAU", "ARE", "QAT", "KWT"]
+      - name: country_name
+        tests:
+          - not_null
+          - accepted_values:
+              values:
+                [
+                  "Egypt",
+                  "Saudi Arabia",
+                  "United Arab Emirates",
+                  "Qatar",
+                  "Kuwait",
+                ]
+      - name: country_currency_code
+        tests:
+          - not_null
+          - accepted_values:
+              values: ["EGP", "SAR", "AED", "QAR", "KWD"]
+      - name: exchange_rate
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_be_between:
+              min_value: 0
+      - name: date
+        tests:
+          - not_null
+          - date_match_strftime:
+              format: "%Y-%m-%d"
+      - name: year
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_be_between:
+              min_value: 1900
+              max_value: 2100
+      - name: month
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_be_between:
+              min_value: 1
+              max_value: 12
+      - name: day
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_be_between:
+              min_value: 1
+              max_value: 31

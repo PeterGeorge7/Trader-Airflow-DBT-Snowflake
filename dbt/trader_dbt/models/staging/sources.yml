@@ -1,0 +1,7 @@
+sources:
+  - name: trader_raw
+    database: trader
+    schema: raw
+    tables:
+      - name: exchange_rate
+      - name: world_bank_raw
