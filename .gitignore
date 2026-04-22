@@ -1,5 +1,5 @@
 .env
-.astro
-.vscode
-.pytest_cache
-__pycache__
+.astro/
+.vscode/
+.pytest_cache/
+__pycache__/
