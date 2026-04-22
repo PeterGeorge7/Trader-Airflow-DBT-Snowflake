@@ -1,5 +1,45 @@
+# ========================
+# Secrets & Credentials
+# ========================
 .env
-.astro/
-.vscode/
-.pytest_cache/
+*.pem
+*.key
+
+# ========================
+# Python & Environments
+# ========================
 __pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.venv/
+venv/
+env/
+
+# ========================
+# Apache Airflow
+# ========================
+logs/
+airflow-webserver.pid
+airflow.db
+airflow.cfg
+
+# ========================
+# dbt (Data Build Tool)
+# ========================
+target/
+dbt_packages/
+dbt-logs/
+
+# ========================
+# Frontend / Web (Optional)
+# ========================
+.astro/
+node_modules/
+
+# ========================
+# IDEs & OS
+# ========================
+.vscode/
+.idea/
+.DS_Store
