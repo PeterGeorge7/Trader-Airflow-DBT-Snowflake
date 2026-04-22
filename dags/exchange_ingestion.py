@@ -19,7 +19,7 @@ country_currency_codes_dict = {
     dag_id="exchange_ingestion",
     # make it schedule to run once a month # but what if month has 31 days? or 28/29 days? maybe we should use cron expression instead
     schedule="@monthly",  # schedule=timedelta(days=30) is not ideal because of varying month lengths, using cron expression for monthly schedule make it run on the first day of each month
-    start_date=datetime(2026, 1, 1),
+    start_date=datetime(2026, 4, 1),
     catchup=False,
 )
 def exchange_ingestion():
@@ -112,9 +112,18 @@ def exchange_ingestion():
             cursor.close()
             conn.close()
 
+    @task.bash()
+    def dbt_models_exchange():
+        return "dbt run --profiles-dir /usr/local/airflow/dbt/trader_dbt --project-dir /usr/local/airflow/dbt/trader_dbt --select stg_exchange_rate+"
+
     api_check = check_api_availability()
     extracted_data = extract_exchange_rates()
-    api_check >> extracted_data >> load_to_snowflake(extracted_data)
+    (
+        api_check
+        >> extracted_data
+        >> load_to_snowflake(extracted_data)
+        >> dbt_models_exchange()
+    )
 
 
 exchange_ingestion()

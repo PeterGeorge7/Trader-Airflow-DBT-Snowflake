@@ -31,7 +31,7 @@ indicators = {
 @dag(
     dag_id="bank_ingestion",
     schedule=timedelta(days=365),
-    start_date=datetime(2026, 1, 1),
+    start_date=datetime(2025, 1, 1),
     catchup=False,
 )
 def bank_ingestion():
@@ -158,6 +158,10 @@ def bank_ingestion():
             if temp_csv_path:
                 Path(temp_csv_path).unlink(missing_ok=True)
 
+    @task.bash()
+    def dbt_models_bank():
+        return "dbt run --profiles-dir /usr/local/airflow/dbt/trader_dbt --project-dir /usr/local/airflow/dbt/trader_dbt --select stg_worldbank+"
+
     # @task(outlets=[csv_bank_data])
     # def save_csv(all_extracted_data):
     #     full_data = []
@@ -179,6 +183,8 @@ def bank_ingestion():
     [api_check, snowflake_check] >> extracted_data
 
     snowflake_save = save_to_snowflake(extracted_data)
+
+    snowflake_save >> dbt_models_bank()
 
 
 bank_ingestion()
