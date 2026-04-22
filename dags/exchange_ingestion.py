@@ -4,14 +4,13 @@ from airflow.sensors.base import PokeReturnValue
 import requests
 import os
 import pandas as pd
-from airflow.providers.snowflake.hooks.snowflake import SnowflakeHook
+from include.snowflake_connector import SnowflakeConnector
+from include.constants import abs_output_data_path, country_currency_codes_dict
 
-country_currency_codes_dict = {
-    "EGP": "Egypt",
-    "SAR": "Saudi Arabia",
-    "AED": "United Arab Emirates",
-    "QAR": "Qatar",
-    "KWD": "Kuwait",
+default_args = {
+    "owner": "airflow",
+    "retries": 3,
+    "retry_delay": timedelta(minutes=5),
 }
 
 
@@ -21,10 +20,11 @@ country_currency_codes_dict = {
     schedule="@monthly",  # schedule=timedelta(days=30) is not ideal because of varying month lengths, using cron expression for monthly schedule make it run on the first day of each month
     start_date=datetime(2026, 4, 1),
     catchup=False,
+    default_args=default_args,
 )
 def exchange_ingestion():
 
-    @task.sensor(poke_interval=60, timeout=3600)
+    @task.sensor(poke_interval=60, timeout=3600, mode="reschedule")  #
     def check_api_availability():
         open_exchange_api_key = os.getenv("open_exchange_api_key")
         try:
@@ -39,78 +39,132 @@ def exchange_ingestion():
 
     # this should gets the exchange rate of each currency against USD and store it in a list of dictionaries with keys: currency_code, exchange_rate, date
     @task
-    def extract_exchange_rates():
+    def extract_exchange_rates(ds=None):
         open_exchange_api_key = os.getenv("open_exchange_api_key")
         country_currency_codes = ",".join(country_currency_codes_dict.keys())
 
-        all_data = []
-        for year in range(2010, 2027):
-            for month in range(1, 13):
-                if year == 2026 and month > 2:
-                    break
-                try:
-                    response = requests.get(
-                        f"https://openexchangerates.org/api/historical/{year}-{month:02d}-01.json?app_id={open_exchange_api_key}&symbols={country_currency_codes}",
-                        timeout=10,
-                    )
-                    response.raise_for_status()
-                    data = response.json()
-                    exchange_rates = []
-                    for currency_code, exchange_rate in data["rates"].items():
-                        exchange_rates.append(
-                            {
-                                "country": country_currency_codes_dict.get(
-                                    currency_code
-                                ),
-                                "target_currency_code": currency_code,
-                                "usd_exchange_rate": exchange_rate,
-                                "date_timestamp": data["timestamp"],
-                                "date": f"{year}-{month:02d}-01",
-                                "source": "open_exchange_rates",
-                            }
-                        )
-                    print(
-                        f"Successfully fetched exchange rates for {year}-{month:02d}."
-                    )
-                    all_data.extend(exchange_rates)
-                except requests.exceptions.RequestException as e:
-                    raise Exception(f"Failed to fetch exchange rates: {e}")
+        # make the year of the airflow schedule dynamic, so it only fetches data up to the current month of the current year, and not beyond that, since future data is not available.
+        # how to make it depends on the airflow schedule? we want to make sure it only fetches data up to the current month of the current year, and not beyond that, since future data is not available.
+        execution_date = pd.to_datetime(ds)
+        year = execution_date.year
+        month = execution_date.month
+        print(f"Extracting exchange rates for year: {year}, month: {month}")
+        try:
+            response = requests.get(
+                f"https://openexchangerates.org/api/historical/{year}-{month:02d}-01.json?app_id={open_exchange_api_key}&symbols={country_currency_codes}",
+                timeout=10,
+            )
+            response.raise_for_status()
+            data = response.json()
+            exchange_rates = []
+            for currency_code, exchange_rate in data["rates"].items():
+                exchange_rates.append(
+                    {
+                        "country_name": country_currency_codes_dict.get(currency_code),
+                        "country_currency_code": currency_code,
+                        "usd_exchange_rate": exchange_rate,
+                        "date_timestamp": data["timestamp"],
+                        "date": f"{year}-{month:02d}-01",
+                        "source": "open_exchange_rates",
+                    }
+                )
+            print(f"Successfully fetched exchange rates for {year}-{month:02d}.")
+        except requests.exceptions.RequestException as e:
+            raise Exception(f"Failed to fetch exchange rates: {e}")
 
         # save into csv file
-        df = pd.DataFrame(all_data)
+        df = pd.DataFrame(exchange_rates)
         # df.to_csv("/data/exchange_rate.csv")
         # CSV output path is hardcoded to /data, which can fail outside container/Linux setups (especially on Windows):
         # make output path safer for local + container use.
-        output_path = os.path.join(os.getcwd(), "exchange_rate.csv")
+        output_dir = os.getenv("OUTPUT_DATA_PATH", abs_output_data_path)
+        os.makedirs(output_dir, exist_ok=True)
+        output_path = os.path.join(output_dir, "exchange_rate.csv")
         df.to_csv(output_path, index=False)
         return output_path
+        # print extraction year and month for debugging
+        # print(f"Extracting exchange rates for execution date: {ds}")
+        # date from string to datetime
+        # execution_date = pd.to_datetime(ds)
+        # year = execution_date.year
+        # month = execution_date.month
+        # print(f"Extracting exchange rates for year: {year}, month: {month}")
 
     @task
     def load_to_snowflake(output_path=None):
-        snowflake_hook = SnowflakeHook(snowflake_conn_id="snowflake_conn")
-        conn = snowflake_hook.get_conn()
+        snowflake_connector = SnowflakeConnector()
+        target_table_exchange = "exchange_rate"
+        temp_table_exchange = f"{target_table_exchange}_temp"
         if not output_path:
-            output_path = os.path.join(os.getcwd(), "exchange_rate.csv")
-        print(f"Loading exchange rates from {output_path} into Snowflake...")
-        try:
+            output_path = os.path.join(
+                os.getenv("OUTPUT_DATA_PATH", abs_output_data_path),
+                "exchange_rate.csv",
+            )
+        with snowflake_connector.conn() as conn:
             cursor = conn.cursor()
-            cursor.execute(
-                f"""
-                PUT file://{output_path} @my_int_stage AUTO_COMPRESS=TRUE
-                """
-            )
-            cursor.execute(
-                f"""
-                    COPY INTO exchange_rate
+            try:
+                # Create a temporary table with the same structure as the target table
+                cursor.execute(
+                    f"""
+                    CREATE OR REPLACE TABLE {temp_table_exchange} LIKE {target_table_exchange}
+                    """
+                )
+                print(f"Temporary table {temp_table_exchange} created successfully.")
+
+                # Upload the CSV file to Snowflake stage
+                cursor.execute(
+                    f"""
+                    PUT file://{output_path} @my_int_stage AUTO_COMPRESS=TRUE
+                    """
+                )
+                print(f"File {output_path} uploaded to stage successfully.")
+
+                # Load data from the stage into the temporary table
+                cursor.execute(
+                    f"""
+                    COPY INTO {temp_table_exchange}
                     FROM @my_int_stage/{os.path.basename(output_path)}.gz
-                """
-            )
-            print(f"Successfully loaded exchange rates into Snowflake.")
-        except Exception as e:
-            raise Exception(f"Failed to load exchange rates into Snowflake: {e}")
-        finally:
-            cursor.close()
-            conn.close()
+                    """
+                )
+                print(
+                    f"Data loaded into temporary table {temp_table_exchange} successfully."
+                )
+                print(
+                    f"Starting merge of data from {temp_table_exchange} into {target_table_exchange}..."
+                )
+                # Merge data from the temporary table into the target table
+                cursor.execute(
+                    f"""
+                    MERGE INTO {target_table_exchange} AS target
+                    USING {temp_table_exchange} AS source
+                    ON target.country_currency_code = source.country_currency_code
+                        AND target.date = source.date
+                    WHEN MATCHED THEN UPDATE SET
+                        target.usd_exchange_rate = source.usd_exchange_rate,
+                        target.date_timestamp = source.date_timestamp,
+                        target.source = source.source
+                    WHEN NOT MATCHED THEN INSERT (
+                        country_name, country_currency_code, usd_exchange_rate, date_timestamp, date, source
+                    ) VALUES (
+                        source.country_name, source.country_currency_code, source.usd_exchange_rate, source.date_timestamp, source.date, source.source
+                    )
+                    """
+                )
+                print(
+                    f"Data merged into target table {target_table_exchange} successfully."
+                )
+            except Exception as e:
+                raise Exception(f"Failed to load exchange rates into Snowflake: {e}")
+            finally:
+                # Clean up: Drop the temporary table and remove the file from stage
+                cursor.execute(f"DROP TABLE IF EXISTS {temp_table_exchange}")
+                cursor.execute(
+                    f"REMOVE @my_int_stage/{os.path.basename(output_path)}.gz"
+                )
+                # Remove the local CSV file after loading
+                if os.path.exists(output_path):
+                    os.remove(output_path)
+                    print(f"Local file {output_path} removed successfully.")
 
     @task.bash()
     def dbt_models_exchange():

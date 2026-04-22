@@ -8,24 +8,7 @@ import time
 import tempfile
 import pandas as pd
 from airflow.providers.snowflake.hooks.snowflake import SnowflakeHook
-
-# csv_bank_data = Dataset("data/world_bank_data.csv")
-
-countries_codes = {
-    "Egypt": "EGY",
-    "Saudi Arabia": "SAU",
-    "United Arab Emirates": "ARE",
-    "Qatar": "QAT",
-    "Kuwait": "KWT",
-}
-
-indicators = {
-    "GDP": "NY.GDP.MKTP.CD",
-    # 'Population': 'SP.POP.TOTL',
-    "Unemployment": "SL.UEM.TOTL.ZS",
-    "Inflation": "FP.CPI.TOTL.ZG",
-    # 'Life Expectancy': 'SP.DYN.LE00.IN'
-}
+from include.constants import indicators, countries_codes
 
 
 @dag(

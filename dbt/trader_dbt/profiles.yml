@@ -4,7 +4,7 @@ trader_dbt:
       account: "{{ env_var('snowflake_account') }}"
       database: "{{ env_var('snowflake_database') }}"
       password: "{{ env_var('snowflake_password') }}"
-      role: ACCOUNTADMIN
+      role: "{{ env_var('snowflake_role') }}"
       schema: STAGING
       threads: 1
       type: snowflake
